@@ -1,0 +1,38 @@
+https://api.khanglobalstudies.com/cms/user/v2/courses
+
+courses['id']
+courses['title']
+courses['image']['large']
+extra =>> access token, updated at
+
+
+https://api.khanglobalstudies.com/cms/user/courses/{courses['id']}/v2-lessons
+
+subject['id']
+subject['name']
+subject['videos']
+extra =>> courses['id']
+
+
+https://api.khanglobalstudies.com/cms/lessons/{subject['id']}
+
+lessons['videos']['id']
+lessons['videos']['thumb']
+lessons['videos']['name']
+lessons['videos']['video_url']
+lessons['videos']['hd_video_url']
+lessons['videos']['published_at']
+extra =>> subject['id']
+
+
+
+
+
+
+
+
+
+
+
+
+
