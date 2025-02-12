@@ -4,12 +4,15 @@
     "express": "^4.21.2",
     "mongodb": "^6.13.0"
   },
+  "scripts": {
+    "start": "node app.js"
+  },
   "name": "kgs-main-api",
   "version": "1.0.0",
   "main": "app.js",
   "devDependencies": {},
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "engines": {
+    "node": "18.x"
   },
   "keywords": [],
   "author": "",
