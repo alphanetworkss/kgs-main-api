@@ -1,18 +1,18 @@
 {
-  "name": "kgs-api",
-  "version": "1..0.0",
-  "main": "app.js",
-  "scripts": {
-    "start": "node app.js",
-    "dev": "nodemon app.js"
-  },
   "dependencies": {
     "axios": "^1.7.9",
     "express": "^4.21.2",
     "mongodb": "^6.13.0"
   },
-  "engines": {
-    "node": "18.x",
-    "npm": "9.x"
-  }
+  "name": "kgs-main-api",
+  "version": "1.0.0",
+  "main": "app.js",
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": ""
 }
