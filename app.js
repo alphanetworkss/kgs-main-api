@@ -19,35 +19,73 @@ app.get('/store-courses', async (req, res) => {
     }
 
     try {
+        // Validate the access token immediately
+        const testResponse = await axios.get('https://api.khanglobalstudies.com/cms/user/v2/courses', {
+            headers: { Authorization: `Bearer ${accessToken}` }
+        });
+
+        // If token is valid, start processing
+        res.json({ message: 'Processing started. Check server logs for completion status.' });
+
+        // Start background processing
+        processStoreCourses(accessToken).catch(error => {
+            console.error('Background processing error:', error);
+        });
+
+    } catch (error) {
+        // Handle authentication errors
+        if (error.response?.status === 401) {
+            return res.status(401).json({
+                error: 'Unauthenticated. Please check your Phone Number / Password or token and try again.'
+            });
+        }
+        // Handle other errors
+        res.status(500).json({ error: error.message });
+    }
+});
+
+async function processStoreCourses(accessToken) {
+    const client = new MongoClient(mongoURI);
+    try {
+        await client.connect();
+        const db = client.db(dbName);
+        const collection = db.collection(collectionName);
+        const subjectCollection = db.collection(subjectCollectionName);
+        const lessonCollection = db.collection(lessonCollectionName);
+
+        // Fetch courses from the API
         const response = await axios.get('https://api.khanglobalstudies.com/cms/user/v2/courses', {
             headers: { Authorization: `Bearer ${accessToken}` }
         });
 
         if (!Array.isArray(response.data)) {
-            return res.status(500).json({ error: 'Unexpected API response format' });
+            throw new Error('Unexpected API response format');
         }
 
-        const client = new MongoClient(mongoURI);
-        await client.connect();
-        const db = client.db(dbName);
-        const collection = db.collection(collectionName);
-        const subjectCollection = db.collection(subjectCollectionName);
-        const lessonCollection = db.collection(lessonCollectionName); // New collection
-
+        // Process each course
         for (const course of response.data) {
             const existingCourse = await collection.findOne({ id: course.id });
+
             if (existingCourse) {
-                if (existingCourse.accessToken) {
-                    console.log(`Batch with ID ${course.id} already exists and is up-to-date.`);
-                    continue;
-                } else {
+                // Update existing course if accessToken is missing
+                if (!existingCourse.accessToken) {
                     await collection.updateOne(
                         { id: course.id },
-                        { $set: { title: course.title, image: course.image.large, accessToken, updatedAt: new Date() } }
+                        {
+                            $set: {
+                                title: course.title,
+                                image: course.image.large,
+                                accessToken,
+                                updatedAt: new Date()
+                            }
+                        }
                     );
-                    console.log(`Batch with ID ${course.id} existed but was missing accessToken, updated now.`);
+                    console.log(`Updated course: ${course.title} (ID: ${course.id})`);
+                } else {
+                    console.log(`Course already exists: ${course.title} (ID: ${course.id})`);
                 }
             } else {
+                // Insert new course
                 await collection.insertOne({
                     id: course.id,
                     title: course.title,
@@ -55,27 +93,36 @@ app.get('/store-courses', async (req, res) => {
                     accessToken,
                     updatedAt: new Date()
                 });
-                console.log(`Added new batch: ${course.title} (ID: ${course.id})`);
+                console.log(`Added new course: ${course.title} (ID: ${course.id})`);
             }
 
+            // Fetch and process subjects for the course
             const subjectResponse = await axios.get(`https://api.khanglobalstudies.com/cms/user/courses/${course.id}/v2-lessons`, {
                 headers: { Authorization: `Bearer ${accessToken}` }
             });
+
             if (Array.isArray(subjectResponse.data)) {
                 for (const subject of subjectResponse.data) {
+                    // Update or insert subject
                     await subjectCollection.updateOne(
                         { id: subject.id, courseId: course.id },
-                        { $set: { name: subject.name, videos: subject.videos, updatedAt: new Date() } },
+                        {
+                            $set: {
+                                name: subject.name,
+                                videos: subject.videos,
+                                updatedAt: new Date()
+                            }
+                        },
                         { upsert: true }
                     );
-                    console.log(`Stored subject: ${subject.name} (ID: ${subject.id}) for course ID: ${course.id}`);
+                    console.log(`Processed subject: ${subject.name} (ID: ${subject.id}) for course ID: ${course.id}`);
 
-                    // Fetch and store lesson data for this subject
+                    // Fetch and process lessons for the subject
                     const lessonResponse = await axios.get(`https://api.khanglobalstudies.com/cms/lessons/${subject.id}`, {
                         headers: { Authorization: `Bearer ${accessToken}` }
                     });
 
-                    if (lessonResponse.data && lessonResponse.data.videos) {
+                    if (lessonResponse.data?.videos) {
                         for (const video of lessonResponse.data.videos) {
                             // Handle PDFs
                             let pdfData = null;
@@ -84,12 +131,12 @@ app.get('/store-courses', async (req, res) => {
                                     title: video.pdfs.title,
                                     url: video.pdfs.url
                                 };
-                                // If both title and url are null, set pdfData to null
                                 if (pdfData.title === null && pdfData.url === null) {
                                     pdfData = null;
                                 }
                             }
 
+                            // Update or insert lesson
                             await lessonCollection.updateOne(
                                 { id: video.id, subjectId: subject.id, courseId: course.id },
                                 {
@@ -100,7 +147,7 @@ app.get('/store-courses', async (req, res) => {
                                         video_url: video.video_url,
                                         hd_video_url: video.hd_video_url,
                                         published_at: video.published_at,
-                                        pdfs: pdfData, // Store PDF data or null
+                                        pdfs: pdfData,
                                         subjectId: subject.id,
                                         courseId: course.id,
                                         updatedAt: new Date()
@@ -108,24 +155,101 @@ app.get('/store-courses', async (req, res) => {
                                 },
                                 { upsert: true }
                             );
-                            console.log(`Stored lesson video: ${video.name} (ID: ${video.id}) for subject ID: ${subject.id}`);
+                            console.log(`Processed lesson video: ${video.name} (ID: ${video.id}) for subject ID: ${subject.id}`);
                         }
                     }
                 }
             }
         }
 
-        await client.close();
-        res.json({ message: 'Courses, subjects, and lessons processed successfully' });
+        console.log('All courses, subjects, and lessons processed successfully');
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('Error during processing:', error);
+
+        // Handle unauthorized errors
+        if (error.response?.status === 401) {
+            const db = client.db(dbName);
+            const collection = db.collection(collectionName);
+            await collection.updateMany(
+                { accessToken },
+                { $unset: { accessToken: 1 } }
+            );
+            console.log('Invalid access token removed from all courses');
+        }
+    } finally {
+        await client.close();
     }
-});
+}
 
 app.get('/update/:id', async (req, res) => {
     const { id } = req.params;
+    const client = new MongoClient(mongoURI);
+
     try {
-        const client = new MongoClient(mongoURI);
+        await client.connect();
+        const db = client.db(dbName);
+        const collection = db.collection(collectionName);
+
+        // Immediate check for batch existence
+        const existingBatch = await collection.findOne({ id: parseInt(id) });
+        if (!existingBatch) {
+            return res.status(404).json({ error: 'Batch not found' });
+        }
+
+        // Immediate access token check
+        if (!existingBatch.accessToken) {
+            return res.status(403).json({ 
+                error: 'I am not able to update this batch. Please update by logging in.' 
+            });
+        }
+
+        // Immediate cooldown check
+        if (existingBatch.updatedAt) {
+            const lastUpdated = new Date(existingBatch.updatedAt);
+            const hoursDiff = (Date.now() - lastUpdated) / (1000 * 60 * 60);
+            
+            if (hoursDiff < 18) {
+                const remaining = (18 - hoursDiff).toFixed(1);
+                return res.status(429).json({
+                    error: `Please wait ${remaining} hours before updating again.`
+                });
+            }
+        }
+
+        // Immediate token validation
+        try {
+            await axios.get('https://api.khanglobalstudies.com/cms/user/v2/courses', {
+                headers: { Authorization: `Bearer ${existingBatch.accessToken}` }
+            });
+        } catch (error) {
+            if (error.response?.status === 401) {
+                await collection.updateOne(
+                    { id: parseInt(id) },
+                    { $unset: { accessToken: 1 } }
+                );
+                return res.status(401).json({
+                    error: 'I am not able to update this batch. Please update by logging in.'
+                });
+            }
+            throw error;
+        }
+
+        // Start background processing if all checks pass
+        res.json({ message: 'Update process started. Check server logs for status.' });
+        processUpdate(id).catch(error => {
+            console.error('Background update error:', error);
+        });
+
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    } finally {
+        await client.close();
+    }
+});
+
+async function processUpdate(id) {
+    const client = new MongoClient(mongoURI);
+    try {
         await client.connect();
         const db = client.db(dbName);
         const collection = db.collection(collectionName);
@@ -133,130 +257,90 @@ app.get('/update/:id', async (req, res) => {
         const lessonCollection = db.collection(lessonCollectionName);
 
         const existingBatch = await collection.findOne({ id: parseInt(id) });
-        if (!existingBatch) {
-            await client.close();
-            return res.status(404).json({ error: 'Batch not found' });
+        const accessToken = existingBatch.accessToken;
+
+        // Fetch updated course data
+        const response = await axios.get('https://api.khanglobalstudies.com/cms/user/v2/courses', {
+            headers: { Authorization: `Bearer ${accessToken}` }
+        });
+
+        const updatedCourse = response.data.find(course => course.id === parseInt(id));
+        if (!updatedCourse) {
+            throw new Error('Course data not found in API response');
         }
 
-        let accessToken = existingBatch.accessToken;
-        if (!accessToken) {
-            await client.close();
-            return res.status(403).json({ error: 'Access token not found for this batch' });
-        }
+        // Update course information
+        await collection.updateOne(
+            { id: parseInt(id) },
+            { $set: { 
+                title: updatedCourse.title,
+                image: updatedCourse.image.large,
+                updatedAt: new Date() 
+            }}
+        );
 
-        // Rate-limiting logic (existing code)
-        if (existingBatch.updatedAt) {
-            const lastUpdatedAt = new Date(existingBatch.updatedAt);
-            const now = new Date();
-            const hoursDiff = (now - lastUpdatedAt) / (1000 * 60 * 60);
-            const remainingTime = Math.max(0, 18 - hoursDiff);
+        // Process subjects
+        const subjectResponse = await axios.get(
+            `https://api.khanglobalstudies.com/cms/user/courses/${id}/v2-lessons`,
+            { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
 
-            if (hoursDiff < 18) {
-                await client.close();
-                return res.status(429).json({
-                    message: `This batch was updated recently. Please wait ${remainingTime.toFixed(2)} hours before updating again.`
-                });
+        for (const subject of subjectResponse.data) {
+            // Update subject
+            await subjectCollection.updateOne(
+                { id: subject.id, courseId: parseInt(id) },
+                { $set: { 
+                    name: subject.name,
+                    videos: subject.videos,
+                    updatedAt: new Date() 
+                }},
+                { upsert: true }
+            );
+
+            // Process lessons
+            const lessonResponse = await axios.get(
+                `https://api.khanglobalstudies.com/cms/lessons/${subject.id}`,
+                { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+
+            for (const video of lessonResponse.data?.videos || []) {
+                // Process PDFs
+                const pdfData = video.pdfs?.filter(pdf => 
+                    pdf.title || pdf.url
+                ) || null;
+
+                await lessonCollection.updateOne(
+                    { id: video.id, subjectId: subject.id, courseId: parseInt(id) },
+                    { $set: {
+                        thumb: video.thumb,
+                        name: video.name,
+                        video_url: video.video_url,
+                        hd_video_url: video.hd_video_url,
+                        published_at: video.published_at,
+                        pdfs: pdfData,
+                        updatedAt: new Date()
+                    }},
+                    { upsert: true }
+                );
             }
         }
 
-        try {
-            const response = await axios.get('https://api.khanglobalstudies.com/cms/user/v2/courses', {
-                headers: { Authorization: `Bearer ${accessToken}` }
-            });
-
-            if (!Array.isArray(response.data)) {
-                await client.close();
-                return res.status(500).json({ error: 'Unexpected API response format' });
-            }
-
-            const updatedCourse = response.data.find(course => course.id === parseInt(id));
-            if (!updatedCourse) {
-                await client.close();
-                return res.status(404).json({ error: 'Updated course data not found' });
-            }
-
+        console.log(`Successfully updated batch ${id}`);
+    } catch (error) {
+        console.error(`Error updating batch ${id}:`, error);
+        
+        // Handle unauthorized errors during processing
+        if (error.response?.status === 401) {
             await collection.updateOne(
                 { id: parseInt(id) },
-                { $set: { title: updatedCourse.title, image: updatedCourse.image.large, updatedAt: new Date() } }
+                { $unset: { accessToken: 1 } }
             );
-            console.log(`Updated batch: ${updatedCourse.title} (ID: ${updatedCourse.id})`);
-
-            const subjectResponse = await axios.get(`https://api.khanglobalstudies.com/cms/user/courses/${id}/v2-lessons`, {
-                headers: { Authorization: `Bearer ${accessToken}` }
-            });
-
-            if (Array.isArray(subjectResponse.data)) {
-                for (const subject of subjectResponse.data) {
-                    await subjectCollection.updateOne(
-                        { id: subject.id, courseId: parseInt(id) },
-                        { $set: { name: subject.name, videos: subject.videos, updatedAt: new Date() } },
-                        { upsert: true }
-                    );
-                    console.log(`Updated subject: ${subject.name} (ID: ${subject.id}) for course ID: ${id}`);
-
-                    // Fetch lesson data for this subject
-                    const lessonResponse = await axios.get(`https://api.khanglobalstudies.com/cms/lessons/${subject.id}`, {
-                        headers: { Authorization: `Bearer ${accessToken}` }
-                    });
-
-                    if (lessonResponse.data && lessonResponse.data.videos) {
-                        for (const video of lessonResponse.data.videos) {
-                            // Handle PDFs array
-                            let pdfData = null;
-                            if (video.pdfs && Array.isArray(video.pdfs)) {
-                                // Filter out PDF entries with both title and URL as null
-                                const validPDFs = video.pdfs
-                                    .map(pdf => ({
-                                        title: pdf.title || null,
-                                        url: pdf.url || null
-                                    }))
-                                    .filter(pdf => pdf.title !== null || pdf.url !== null);
-
-                                // Set pdfData to null if no valid PDFs remain
-                                pdfData = validPDFs.length > 0 ? validPDFs : null;
-                            }
-
-                            await lessonCollection.updateOne(
-                                { id: video.id, subjectId: subject.id, courseId: parseInt(id) },
-                                {
-                                    $set: {
-                                        id: video.id,
-                                        thumb: video.thumb,
-                                        name: video.name,
-                                        video_url: video.video_url,
-                                        hd_video_url: video.hd_video_url,
-                                        published_at: video.published_at,
-                                        pdfs: pdfData, // Now properly handles arrays
-                                        subjectId: subject.id,
-                                        courseId: parseInt(id),
-                                        updatedAt: new Date()
-                                    }
-                                },
-                                { upsert: true }
-                            );
-                            console.log(`Updated lesson video: ${video.name} (ID: ${video.id}) for subject ID: ${subject.id}`);
-                        }
-                    }
-                }
-            }
-
-            await client.close();
-            res.json({ message: 'Batch, subjects, and lessons updated successfully' });
-        } catch (error) {
-            if (error.response && error.response.status === 401) {
-                await collection.updateOne(
-                    { id: parseInt(id) },
-                    { $unset: { accessToken: 1 } }
-                );
-                console.log(`Access token removed for batch ID: ${id} due to authentication failure.`);
-                return res.status(401).json({ error: 'Unauthorized, access token removed' });
-            }
-            res.status(500).json({ error: error.message });
+            console.log(`Removed invalid token for batch ${id}`);
         }
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+    } finally {
+        await client.close();
     }
-});
+}
 
 app.get('/subjects/:courseId', async (req, res) => {
     const { courseId } = req.params;
