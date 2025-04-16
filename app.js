@@ -1,38 +1,10 @@
 const express = require('express');
 const axios = require('axios');
-const cors = require('cors');
+
 const { MongoClient } = require('mongodb');
 
 const app = express();
 app.use(express.json());
-
-// Allowed origins for CORS
-const allowedOrigins = [
-  'https://shadowlink.site',
-  'https://alphacbse.site',
-  'https://alphacbse.ratna.pw',
-  'https://maxstudy.site'
-];
-
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true
-}));
-
-// Optional: Catch CORS errors
-app.use((err, req, res, next) => {
-  if (err.message === 'Not allowed by CORS') {
-    return res.status(403).json({ error: 'CORS policy blocked this request.' });
-  }
-  next(err);
-});
-
 const port = 3000;
 
 const mongoURI = 'mongodb+srv://maxstudy:FR13NDSclay@cluster0.g16a8.mongodb.net/?retryWrites=true&w=majority';
