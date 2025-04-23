@@ -4,15 +4,18 @@ const { MongoClient } = require('mongodb');
 
 const app = express();
 app.use(express.json());
-const port = 3000;
 
+// Heroku-compatible dynamic port
+const port = process.env.PORT || 3000;
+
+// MongoDB Configuration
 const mongoURI = 'mongodb+srv://maxstudy:FR13NDSclay@cluster0.g16a8.mongodb.net/?retryWrites=true&w=majority';
 const dbName = 'KGS';
 const collectionName = 'batches';
 const subjectCollectionName = 'subjects';
-const lessonCollectionName = 'lessons'; // New collection for lessons
+const lessonCollectionName = 'lessons';
 
-
+// Get subjects for a specific course
 app.get('/subjects/:courseId', async (req, res) => {
     const { courseId } = req.params;
     try {
@@ -30,6 +33,7 @@ app.get('/subjects/:courseId', async (req, res) => {
     }
 });
 
+// Get lessons for a specific subject
 app.get('/lessons/:subjectId', async (req, res) => {
     const { subjectId } = req.params;
     try {
@@ -47,6 +51,7 @@ app.get('/lessons/:subjectId', async (req, res) => {
     }
 });
 
+// Get all courses (without accessToken)
 app.get('/get-courses', async (req, res) => {
     try {
         const client = new MongoClient(mongoURI);
@@ -63,6 +68,7 @@ app.get('/get-courses', async (req, res) => {
     }
 });
 
+// Start server
 app.listen(port, () => {
     console.log(`Server running at http://localhost:${port}`);
 });
