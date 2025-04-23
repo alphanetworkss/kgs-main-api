@@ -6,7 +6,7 @@ const app = express();
 app.use(express.json());
 
 // Heroku-compatible dynamic port
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 8526;
 
 // MongoDB Configuration
 const mongoURI = 'mongodb+srv://maxstudy:FR13NDSclay@cluster0.g16a8.mongodb.net/?retryWrites=true&w=majority';
